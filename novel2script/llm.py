@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
@@ -320,12 +322,24 @@ class OpenAICompatibleLLMClient(LLMClient):
         model: str | None = None,
         timeout_sec: int = 60,
     ) -> None:
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.base_url = (base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
-        self.model = model or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+        local_config = self._load_local_config()
+        self.api_key = api_key or local_config.get("api_key") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.base_url = (
+            base_url or local_config.get("base_url") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        ).rstrip("/")
+        self.model = model or local_config.get("model") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
         self.timeout_sec = timeout_sec
         if not self.api_key:
-            raise LLMClientError("OPENAI_API_KEY is required for OpenAI-compatible mode.")
+            raise LLMClientError("API_KEY or OPENAI_API_KEY is required for OpenAI-compatible mode.")
+
+    def _load_local_config(self) -> dict[str, Any]:
+        config_path = Path.cwd() / "novel2script.local.json"
+        if not config_path.exists():
+            return {}
+        try:
+            return json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise LLMClientError(f"Failed to read local config: {exc}") from exc
 
     def generate_json(self, prompt_name: str, prompt: str, payload: dict[str, Any]) -> Any:
         response_text = self._chat(prompt)
@@ -349,15 +363,17 @@ class OpenAICompatibleLLMClient(LLMClient):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_fixed(2),
-        retry=retry_if_exception_type((urllib.error.URLError, TimeoutError, LLMClientError)),
+        retry=retry_if_exception_type(
+            (urllib.error.URLError, http.client.RemoteDisconnected, TimeoutError, LLMClientError)
+        ),
         reraise=True,
     )
     def _chat(self, prompt: str) -> str:
         try:
             return self._chat_once(prompt, include_response_format=True)
-        except LLMClientError as exc:
+        except (LLMClientError, http.client.RemoteDisconnected) as exc:
             message = str(exc).lower()
-            if "response_format" not in message:
+            if isinstance(exc, LLMClientError) and "response_format" not in message:
                 raise
             return self._chat_once(prompt, include_response_format=False)
 

@@ -6,3 +6,4 @@ __pycache__/
 .idea/
 output/
 output_check/
+novel2script.local.json
