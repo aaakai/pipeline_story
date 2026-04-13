@@ -4,11 +4,11 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .extractors import CharacterExtractor, SceneExtractor, ShotGenerator
+from .extractors import ChapterSplitter, CharacterExtractor, SceneExtractor, ShotGenerator
 from .llm import LLMClient, MockLLMClient, OpenAICompatibleLLMClient
-from .loader import load_story_from_txt
+from .loader import load_story_from_txt, load_story_source, split_into_chapters
 from .schemas import Chapter, RunReport, StepReport, Story
-from .utils import dump_json_pair, ensure_dir, get_logger, load_json
+from .utils import dump_json_pair, ensure_dir, get_logger, load_json, slugify_filename
 from .validators import validate_story
 
 
@@ -16,11 +16,13 @@ class Novel2ScriptPipeline:
     def __init__(
         self,
         llm_client: LLMClient | None = None,
-        output_dir: Path | str = Path("./output"),
+        output_dir: Path | str = Path("./output_check"),
     ) -> None:
-        self.output_dir = ensure_dir(Path(output_dir))
+        self.base_output_dir = ensure_dir(Path(output_dir))
+        self.output_dir = self.base_output_dir
         self.logger = get_logger()
         self.llm_client = llm_client or MockLLMClient()
+        self.chapter_splitter = ChapterSplitter(self.llm_client)
         self.scene_extractor = SceneExtractor(self.llm_client)
         self.character_extractor = CharacterExtractor(self.llm_client)
         self.shot_generator = ShotGenerator(self.llm_client)
@@ -48,6 +50,8 @@ class Novel2ScriptPipeline:
 
     def run(self, input_path: Path | str, step: str = "all", use_mock: bool = True) -> RunReport:
         input_path = Path(input_path)
+        preview_story, _ = load_story_source(input_path)
+        self.output_dir = self._make_run_output_dir(preview_story.title)
         report = RunReport(
             story_id=None,
             source_path=str(input_path.resolve()),
@@ -76,10 +80,29 @@ class Novel2ScriptPipeline:
             self._write_report(report)
         return report
 
+    def _make_run_output_dir(self, story_title: str) -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_title = slugify_filename(story_title, fallback="untitled_story")
+        return ensure_dir(self.base_output_dir / f"{timestamp}_{safe_title}")
+
     def _run_ingest(self, input_path: Path, report: RunReport) -> Story:
         step = self._start_step(report, "ingest")
         self.logger.info("[ingest] loaded file")
-        story = load_story_from_txt(input_path)
+        base_story, raw_text = load_story_source(input_path)
+        try:
+            story = self.chapter_splitter.split(base_story, raw_text)
+            if not story.chapters:
+                raise ValueError("LLM chapter splitter returned no chapters.")
+        except Exception as exc:  # noqa: BLE001
+            self.logger.info("[chapters] llm split failed, fallback to rule-based split: %s", exc)
+            fallback_story = load_story_from_txt(input_path)
+            story = base_story.model_copy(update={"chapters": split_into_chapters(raw_text, base_story.id)})
+            story = story.model_copy(
+                update={
+                    "title": fallback_story.title,
+                    "description": fallback_story.description,
+                }
+            )
         self.logger.info("[chapters] split into %s chapters", len(story.chapters))
         report.story_id = story.id
         payload = story.model_dump(mode="json")

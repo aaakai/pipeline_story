@@ -72,6 +72,14 @@ def short_hash(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
 
 
+def slugify_filename(text: str, fallback: str = "untitled") -> str:
+    value = text.strip().lower()
+    value = re.sub(r"\s+", "_", value)
+    value = re.sub(r"[^\w\u4e00-\u9fff-]+", "_", value)
+    value = re.sub(r"_+", "_", value).strip("_")
+    return value or fallback
+
+
 def clean_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("\u3000", " ")
@@ -126,4 +134,3 @@ def try_parse_json(text: str) -> Any:
     if not match:
         raise json.JSONDecodeError("No JSON object found", text, 0)
     return json.loads(match.group(1))
-

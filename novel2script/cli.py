@@ -14,7 +14,7 @@ app = typer.Typer(add_completion=False, help="Convert novel text files into stru
 @app.command()
 def run(
     input_path: Path = typer.Argument(..., exists=True, readable=True, resolve_path=True),
-    output_dir: Path = typer.Option(Path("./output"), "--output-dir", "-o", resolve_path=True),
+    output_dir: Path = typer.Option(Path("./output_check"), "--output-dir", "-o", resolve_path=True),
     step: str = typer.Option("all", "--step", help="ingest | scenes | shots | all"),
     mock: bool = typer.Option(False, "--mock", help="Use deterministic mock client."),
     model: str | None = typer.Option(None, "--model", help="Model name for OpenAI-compatible mode."),
@@ -35,9 +35,9 @@ def run(
     )
     report = pipeline.run(input_path=input_path, step=step, use_mock=mock)
     if report.success:
-        typer.echo(f"Pipeline finished successfully. Output: {output_dir.resolve()}")
+        typer.echo(f"Pipeline finished successfully. Output: {report.output_dir}")
     else:
-        typer.echo(f"Pipeline failed. See report: {(output_dir / 'run_report.json').resolve()}", err=True)
+        typer.echo(f"Pipeline failed. See report: {Path(report.output_dir) / 'run_report.json'}", err=True)
         raise typer.Exit(code=1)
 
 

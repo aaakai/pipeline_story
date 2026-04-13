@@ -32,6 +32,7 @@ pipeline_story/
 - Pipeline 分为 `ingest`、`scenes`、`shots`、`finalize` 四个阶段，每一步都可以单独落盘。
 - 默认优先用标准库，OpenAI-compatible 调用使用 `urllib` 实现，不依赖官方 SDK。
 - `MockLLMClient` 可在无 API Key 条件下跑通整条链路，适合本地开发和测试。
+- 章节切分现在也优先通过 LLM 完成；如果模型失败或返回空结果，会自动回退到本地规则切分。
 - 所有输出同时生成紧凑版 JSON 和 pretty JSON，便于程序消费和人工查看。
 
 ## 安装方法
@@ -50,6 +51,12 @@ pip install -r requirements.txt
 python -m novel2script.cli run examples/sample_novel.txt --mock
 python -m novel2script.cli run examples/sample_novel.txt --mock --step ingest
 python -m novel2script.cli run examples/sample_novel.txt --mock --step scenes -o ./output_mock
+```
+
+默认会输出到 `./output_check/<时间戳>_<故事标题>/`，例如：
+
+```text
+output_check/20260413_163500_sample_novel/
 ```
 
 ## 真实模型模式运行方法
@@ -73,12 +80,14 @@ python -m novel2script.cli run examples/sample_novel.txt --base-url https://your
 ## 校验输出
 
 ```bash
-python -m novel2script.cli validate output/script_pretty.json
+python -m novel2script.cli validate output_check/20260413_163500_sample_novel/script_pretty.json
 ```
 
 ## 输出文件说明
 
-默认输出目录为 `./output`，主要文件包括：
+默认输出根目录为 `./output_check`。每次运行会自动创建一个以“时间戳 + 故事标题”命名的子目录，所有本次产物都会写入该子目录。
+
+主要文件包括：
 
 - `ingested.json` / `ingested_pretty.json`：导入结果和章节切分结果
 - `scenes.json` / `scenes_pretty.json`：场景抽取结果
@@ -154,6 +163,6 @@ python -m unittest discover -s tests
 
 ## 工程说明
 
-- 如果输入小说没有明确章节标记，`loader.py` 会自动按段落和长度降级切分。
+- `ingest` 阶段会先调用 LLM 进行全文章节切分；如果输入小说没有明确章节标记或模型输出异常，会自动按段落和长度降级切分。
 - 如果模型返回非法 JSON，`OpenAICompatibleLLMClient` 会自动进行一次修复重试。
 - 后续如果要扩展数据库、任务队列、图片/视频生成，可以继续在 `pipeline.py` 上游和下游增加新的 step，而不需要推翻现有结构。

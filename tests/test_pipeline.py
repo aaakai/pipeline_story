@@ -12,10 +12,14 @@ class PipelineTests(unittest.TestCase):
             pipeline = Novel2ScriptPipeline.from_config(output_dir=tmp_dir, use_mock=True)
             report = pipeline.run(Path("examples/sample_novel.txt"), step="all", use_mock=True)
             self.assertTrue(report.success)
+            self.assertTrue(Path(report.output_dir).exists())
+            self.assertEqual(Path(report.output_dir).parent.resolve(), Path(tmp_dir).resolve())
 
-            script = load_json(Path(tmp_dir) / "script_pretty.json")
-            self.assertEqual(script["title"], "雾城旧事")
-            self.assertGreaterEqual(len(script["chapters"]), 2)
+            script = load_json(Path(report.output_dir) / "script_pretty.json")
+            self.assertEqual(script["title"], "sample novel")
+            self.assertGreaterEqual(len(script["chapters"]), 1)
+            self.assertEqual(script["chapters"][0]["chapter_index"], 1)
+            self.assertTrue(script["chapters"][0]["title"])
             scene_count = sum(len(chapter["scenes"]) for chapter in script["chapters"])
             shot_count = sum(
                 len(scene["shots"])

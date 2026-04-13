@@ -8,6 +8,43 @@ def render_json(data: Any) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
+def story_to_chapters_prompt(story_payload: dict[str, Any]) -> str:
+    return f"""
+任务目标：
+你要把整篇小说文本拆解为有顺序的章节（chapter）列表。
+
+输入字段：
+{render_json(story_payload)}
+
+输出 schema：
+{{
+  "title": "string",
+  "description": "string or null",
+  "chapters": [
+    {{
+      "chapter_index": 1,
+      "title": "string",
+      "raw_text": "string",
+      "summary": "string or null"
+    }}
+  ]
+}}
+
+约束条件：
+1. 必须只输出 JSON，不能输出 markdown 代码块，不能输出额外解释。
+2. chapters 必须严格按原文顺序输出，chapter_index 从 1 连续递增。
+3. 如果原文中存在明确章节标题，优先保留原有章节边界和标题。
+4. 如果原文没有明确章节标记，按叙事段落和长度进行稳定切分，尽量切成 1 到 8 个章节。
+5. 每个 chapter 的 raw_text 必须来自输入文本中的连续原文片段，不要改写，不要跨章节拼接。
+6. title 尽量稳定简洁；如果原文没有章节标题，可使用如“Segment 1”这类保守标题。
+7. summary 可简短概括章节内容；无法确定时填 null。
+8. 不要遗漏正文，不要重复正文，不要编造新的内容。
+9. 如果输入文本首行像书名，输出 title 应优先使用该书名。
+
+只返回 JSON。
+""".strip()
+
+
 def chapter_to_scenes_prompt(chapter_payload: dict[str, Any]) -> str:
     return f"""
 任务目标：

@@ -3,9 +3,52 @@ from __future__ import annotations
 from typing import Any
 
 from .llm import LLMClient
-from .prompts import chapter_to_scenes_prompt, scene_characters_prompt, scene_to_shots_prompt
+from .prompts import (
+    chapter_to_scenes_prompt,
+    scene_characters_prompt,
+    scene_to_shots_prompt,
+    story_to_chapters_prompt,
+)
 from .schemas import ActionBeat, Chapter, CharacterRef, DialogueBeat, Scene, Shot, Story
 from .utils import stable_id
+
+
+class ChapterSplitter:
+    def __init__(self, llm_client: LLMClient) -> None:
+        self.llm_client = llm_client
+
+    def split(self, story: Story, raw_text: str) -> Story:
+        payload = {
+            "title": story.title,
+            "description": story.description,
+            "source_path": story.source_path,
+            "raw_text": raw_text,
+        }
+        prompt = story_to_chapters_prompt(payload)
+        result = self.llm_client.generate_json("story_to_chapters", prompt, payload)
+
+        chapters: list[Chapter] = []
+        for index, item in enumerate(result.get("chapters", []), start=1):
+            title = item.get("title") or f"Segment {index}"
+            chapters.append(
+                Chapter(
+                    id=stable_id("chapter", story.id, str(index), title),
+                    story_id=story.id,
+                    chapter_index=item.get("chapter_index") or index,
+                    title=title,
+                    raw_text=item.get("raw_text") or "",
+                    summary=item.get("summary"),
+                    scenes=[],
+                )
+            )
+
+        return story.model_copy(
+            update={
+                "title": result.get("title") or story.title,
+                "description": result.get("description") or story.description,
+                "chapters": chapters,
+            }
+        )
 
 
 class SceneExtractor:

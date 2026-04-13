@@ -27,6 +27,8 @@ class MockLLMClient(LLMClient):
     """Deterministic mock implementation for local end-to-end tests."""
 
     def generate_json(self, prompt_name: str, prompt: str, payload: dict[str, Any]) -> Any:
+        if prompt_name == "story_to_chapters":
+            return self._story_to_chapters(payload)
         if prompt_name == "chapter_to_scenes":
             return self._chapter_to_scenes(payload)
         if prompt_name == "scene_characters":
@@ -34,6 +36,16 @@ class MockLLMClient(LLMClient):
         if prompt_name == "scene_to_shots":
             return self._scene_to_shots(payload)
         raise LLMClientError(f"Unsupported mock prompt: {prompt_name}")
+
+    def _story_to_chapters(self, payload: dict[str, Any]) -> dict[str, Any]:
+        text = payload["raw_text"]
+        title = payload.get("title") or "Untitled Story"
+        chapters = self._split_chapters(text)
+        return {
+            "title": title,
+            "description": payload.get("description"),
+            "chapters": chapters,
+        }
 
     def _chapter_to_scenes(self, payload: dict[str, Any]) -> dict[str, Any]:
         chapter_text = payload["raw_text"]
@@ -142,6 +154,58 @@ class MockLLMClient(LLMClient):
         if current:
             chunks.append("\n\n".join(current))
         return chunks or [text]
+
+    def _split_chapters(self, text: str) -> list[dict[str, Any]]:
+        pattern = re.compile(
+            r"(?m)^(?P<title>(?:第[\d一二三四五六七八九十百零两]+[章节回卷部]|chapter\s+\d+|chap\.\s*\d+)[^\n]*)$",
+            flags=re.IGNORECASE,
+        )
+        matches = list(pattern.finditer(text))
+        chapters: list[dict[str, Any]] = []
+        if matches:
+            for index, match in enumerate(matches, start=1):
+                start = match.start()
+                end = matches[index].start() if index < len(matches) else len(text)
+                block = text[start:end].strip()
+                lines = block.splitlines()
+                title = lines[0].strip() if lines else f"Segment {index}"
+                body = "\n".join(lines[1:]).strip() or block
+                chapters.append(
+                    {
+                        "chapter_index": index,
+                        "title": title,
+                        "raw_text": body,
+                        "summary": self._summarize(body),
+                    }
+                )
+            return chapters
+
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+        chunks: list[str] = []
+        current: list[str] = []
+        current_len = 0
+        for paragraph in paragraphs:
+            size = len(paragraph)
+            if current and current_len + size + 2 > 2200:
+                chunks.append("\n\n".join(current))
+                current = [paragraph]
+                current_len = size
+            else:
+                current.append(paragraph)
+                current_len += size + 2
+        if current:
+            chunks.append("\n\n".join(current))
+
+        for index, chunk in enumerate(chunks or [text], start=1):
+            chapters.append(
+                {
+                    "chapter_index": index,
+                    "title": f"Segment {index}",
+                    "raw_text": chunk,
+                    "summary": self._summarize(chunk),
+                }
+            )
+        return chapters
 
     def _extract_character_refs(self, text: str) -> list[dict[str, Any]]:
         names: list[str] = []

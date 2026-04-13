@@ -20,20 +20,26 @@ CHAPTER_PATTERN = re.compile(
 )
 
 
-def load_story_from_txt(path: Path) -> Story:
+def load_story_source(path: Path) -> tuple[Story, str]:
     raw_text = read_text(path)
     cleaned = clean_text(raw_text)
     fallback_title = path.stem.replace("_", " ").strip() or "Untitled Story"
     title = guess_story_title(cleaned, fallback_title)
     story_id = stable_id("story", str(path.resolve()), cleaned[:200])
-    chapters = split_into_chapters(cleaned, story_id)
-    return Story(
+    story = Story(
         id=story_id,
         title=title,
         description=f"Imported from {path.name}",
         source_path=str(path.resolve()),
-        chapters=chapters,
+        chapters=[],
     )
+    return story, cleaned
+
+
+def load_story_from_txt(path: Path) -> Story:
+    story, cleaned = load_story_source(path)
+    chapters = split_into_chapters(cleaned, story.id)
+    return story.model_copy(update={"chapters": chapters})
 
 
 def split_into_chapters(text: str, story_id: str) -> list[Chapter]:
