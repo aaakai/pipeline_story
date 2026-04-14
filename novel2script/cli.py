@@ -20,7 +20,7 @@ def run(
     model: str | None = typer.Option(None, "--model", help="Model name for OpenAI-compatible mode."),
     base_url: str | None = typer.Option(None, "--base-url", help="Override OPENAI_BASE_URL."),
     api_key: str | None = typer.Option(None, "--api-key", help="Override OPENAI_API_KEY."),
-    timeout_sec: int = typer.Option(60, "--timeout-sec", help="Request timeout in seconds."),
+    timeout_sec: int = typer.Option(600, "--timeout-sec", help="Request timeout in seconds."),
 ) -> None:
     if step not in {"ingest", "scenes", "shots", "all"}:
         raise typer.BadParameter("step must be one of: ingest, scenes, shots, all")

@@ -26,6 +26,7 @@ def _validate_required_fields(story: Story) -> list[str]:
         errors.append("Story id is empty.")
     if not story.title:
         errors.append("Story title is empty.")
+    character_ids = {character.id for character in story.characters}
     for chapter in story.chapters:
         if not chapter.raw_text.strip():
             errors.append(f"Chapter {chapter.chapter_index} raw_text is empty.")
@@ -34,6 +35,11 @@ def _validate_required_fields(story: Story) -> list[str]:
                 errors.append(f"Scene {scene.scene_index} in chapter {chapter.chapter_index} has empty title.")
             if not scene.summary.strip():
                 errors.append(f"Scene {scene.scene_index} in chapter {chapter.chapter_index} has empty summary.")
+            for character in scene.characters:
+                if character.character_id and character.character_id not in character_ids:
+                    errors.append(
+                        f"Scene {scene.scene_index} in chapter {chapter.chapter_index} references missing character_id {character.character_id}."
+                    )
             for shot in scene.shots:
                 if not shot.content.strip():
                     errors.append(

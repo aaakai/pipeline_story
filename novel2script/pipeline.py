@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from .extractors import ChapterSplitter, CharacterExtractor, SceneExtractor, ShotGenerator
+from .extractors import ChapterSplitter, CharacterExtractor, SceneExtractor, ShotGenerator, StoryCharacterBuilder
 from .llm import LLMClient, MockLLMClient, OpenAICompatibleLLMClient
 from .loader import load_story_from_txt, load_story_source, split_into_chapters
 from .schemas import Chapter, RunReport, StepReport, Story
@@ -25,6 +25,7 @@ class Novel2ScriptPipeline:
         self.chapter_splitter = ChapterSplitter(self.llm_client)
         self.scene_extractor = SceneExtractor(self.llm_client)
         self.character_extractor = CharacterExtractor(self.llm_client)
+        self.story_character_builder = StoryCharacterBuilder()
         self.shot_generator = ShotGenerator(self.llm_client)
 
     @classmethod
@@ -35,7 +36,7 @@ class Novel2ScriptPipeline:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
-        timeout_sec: int = 60,
+        timeout_sec: int = 600,
     ) -> "Novel2ScriptPipeline":
         if use_mock:
             client: LLMClient = MockLLMClient()
@@ -124,10 +125,12 @@ class Novel2ScriptPipeline:
             total_scenes += len(scenes)
             chapters.append(enriched.model_copy(update={"scenes": scenes}))
         story = story.model_copy(update={"chapters": chapters})
+        story = self.story_character_builder.build(story)
         self.logger.info("[scenes] extracted %s scenes", total_scenes)
         scenes_payload = {
             "story_id": story.id,
             "title": story.title,
+            "characters": [character.model_dump(mode="json") for character in story.characters],
             "chapters": [
                 {
                     "chapter_id": chapter.id,
@@ -163,6 +166,7 @@ class Novel2ScriptPipeline:
         shots_payload = {
             "story_id": story.id,
             "title": story.title,
+            "characters": [character.model_dump(mode="json") for character in story.characters],
             "chapters": [
                 {
                     "chapter_id": chapter.id,

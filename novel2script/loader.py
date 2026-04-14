@@ -31,6 +31,7 @@ def load_story_source(path: Path) -> tuple[Story, str]:
         title=title,
         description=f"Imported from {path.name}",
         source_path=str(path.resolve()),
+        characters=[],
         chapters=[],
     )
     return story, cleaned

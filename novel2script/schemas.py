@@ -7,9 +7,22 @@ from pydantic import BaseModel, Field
 
 
 class CharacterRef(BaseModel):
+    character_id: str | None = None
     name: str
     alias: str | None = None
     role_hint: str | None = None
+
+
+class StoryCharacter(BaseModel):
+    id: str
+    canonical_name: str
+    aliases: list[str] = Field(default_factory=list)
+    role_hint: str | None = None
+    chapter_ids: list[str] = Field(default_factory=list)
+    scene_ids: list[str] = Field(default_factory=list)
+    scene_count: int = 0
+    first_chapter_index: int | None = None
+    first_scene_id: str | None = None
 
 
 class ActionBeat(BaseModel):
@@ -72,6 +85,7 @@ class Story(BaseModel):
     title: str
     description: str | None = None
     source_path: str
+    characters: list[StoryCharacter] = Field(default_factory=list)
     chapters: list[Chapter] = Field(default_factory=list)
 
 
@@ -98,4 +112,3 @@ class RunReport(BaseModel):
     steps: list[StepReport] = Field(default_factory=list)
     success: bool = False
     errors: list[str] = Field(default_factory=list)
-

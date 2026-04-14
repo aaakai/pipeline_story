@@ -320,7 +320,7 @@ class OpenAICompatibleLLMClient(LLMClient):
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
-        timeout_sec: int = 60,
+        timeout_sec: int = 600,
     ) -> None:
         local_config = self._load_local_config()
         self.api_key = api_key or local_config.get("api_key") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -351,6 +351,13 @@ class OpenAICompatibleLLMClient(LLMClient):
             try:
                 return try_parse_json(repaired)
             except json.JSONDecodeError as exc:
+                if prompt_name == "chapter_to_scenes":
+                    scene_repair_prompt = self._build_scene_repair_prompt(payload, response_text, repaired)
+                    repaired_scenes = self._chat(scene_repair_prompt)
+                    try:
+                        return try_parse_json(repaired_scenes)
+                    except json.JSONDecodeError as scene_exc:
+                        raise LLMClientError(f"Failed to parse JSON for prompt {prompt_name}") from scene_exc
                 raise LLMClientError(f"Failed to parse JSON for prompt {prompt_name}") from exc
 
     def _build_repair_prompt(self, bad_response: str) -> str:
@@ -358,6 +365,67 @@ class OpenAICompatibleLLMClient(LLMClient):
             "你将收到一段原始模型输出，它本应是 JSON，但格式不合法。"
             "请只返回修复后的合法 JSON，不要输出解释，不要使用 markdown 代码块。\n\n"
             f"原始输出：\n{bad_response}"
+        )
+
+    def _build_scene_repair_prompt(
+        self,
+        payload: dict[str, Any],
+        bad_response: str,
+        repaired_attempt: str,
+    ) -> str:
+        schema = {
+            "summary": "string or null",
+            "scenes": [
+                {
+                    "title": "string",
+                    "location_name": "string or null",
+                    "time_of_day": "string or null",
+                    "summary": "string",
+                    "characters": [
+                        {
+                            "name": "string",
+                            "alias": "string or null",
+                            "role_hint": "string or null",
+                        }
+                    ],
+                    "mood": "string or null",
+                    "actions": [
+                        {
+                            "actor": "string or null",
+                            "action": "string",
+                            "target": "string or null",
+                            "emotion": "string or null",
+                        }
+                    ],
+                    "dialogues": [
+                        {
+                            "speaker": "string or null",
+                            "content": "string",
+                            "emotion": "string or null",
+                        }
+                    ],
+                    "source_text": "string",
+                }
+            ],
+        }
+        return (
+            "你要修复一个章节转场景结果。之前的模型输出不是合法 JSON，或者字段结构不符合要求。"
+            "现在请基于给定章节内容，重新输出严格合法的 JSON。"
+            "不要解释，不要输出 markdown 代码块，只返回一个 JSON 对象。\n\n"
+            "输入章节：\n"
+            f"{json.dumps(payload, ensure_ascii=False, indent=2)}\n\n"
+            "目标 schema：\n"
+            f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n\n"
+            "约束：\n"
+            "1. scenes 必须是数组。\n"
+            "2. actions 中每一项都必须有 action 字段；dialogues 中每一项都必须有 content 字段。\n"
+            "3. 如果某字段无法确定，使用 null、空字符串或空数组，不要省略关键字段。\n"
+            "4. source_text 必须来自章节原文的连续片段，不要编造剧情。\n"
+            "5. 只返回合法 JSON。\n\n"
+            "第一次原始输出：\n"
+            f"{bad_response}\n\n"
+            "第一次修复输出：\n"
+            f"{repaired_attempt}"
         )
 
     @retry(
@@ -388,6 +456,7 @@ class OpenAICompatibleLLMClient(LLMClient):
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.2,
+            "stream": True,
         }
         if include_response_format:
             payload["response_format"] = {"type": "json_object"}
@@ -403,20 +472,68 @@ class OpenAICompatibleLLMClient(LLMClient):
         )
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
-                raw = response.read().decode("utf-8")
+                content = self._read_streaming_response(response)
         except urllib.error.HTTPError as exc:
             details = exc.read().decode("utf-8", errors="ignore")
             raise LLMClientError(f"HTTP {exc.code}: {details}") from exc
 
-        data = json.loads(raw)
-        choices = data.get("choices") or []
+        return content
+
+    def _read_streaming_response(self, response: Any) -> str:
+        text_fragments: list[str] = []
+        raw_lines_seen = 0
+
+        for raw_line in response:
+            if not raw_line:
+                continue
+            raw_lines_seen += 1
+            line = raw_line.decode("utf-8", errors="ignore").strip()
+            if not line:
+                continue
+
+            if line.startswith("data:"):
+                data = line[5:].strip()
+            else:
+                data = line
+
+            if data == "[DONE]":
+                break
+
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+
+            delta_text = self._extract_stream_delta_text(chunk)
+            if delta_text:
+                text_fragments.append(delta_text)
+
+        content = "".join(text_fragments).strip()
+        if content:
+            return content
+
+        if raw_lines_seen == 0:
+            raise LLMClientError("Empty streaming response returned from API.")
+        raise LLMClientError("Streaming response contained no text content.")
+
+    def _extract_stream_delta_text(self, chunk: dict[str, Any]) -> str:
+        choices = chunk.get("choices") or []
         if not choices:
-            raise LLMClientError("No choices returned from API.")
-        message = choices[0].get("message") or {}
-        content = message.get("content")
+            return ""
+
+        delta = choices[0].get("delta") or {}
+        content = delta.get("content")
+        if isinstance(content, str):
+            return content
         if isinstance(content, list):
             text_parts = [item.get("text", "") for item in content if isinstance(item, dict)]
-            content = "".join(text_parts)
-        if not isinstance(content, str) or not content.strip():
-            raise LLMClientError("Empty content returned from API.")
-        return content
+            return "".join(text_parts)
+
+        message = choices[0].get("message") or {}
+        fallback_content = message.get("content")
+        if isinstance(fallback_content, str):
+            return fallback_content
+        if isinstance(fallback_content, list):
+            text_parts = [item.get("text", "") for item in fallback_content if isinstance(item, dict)]
+            return "".join(text_parts)
+        return ""
